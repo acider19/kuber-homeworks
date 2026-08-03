@@ -1,192 +1,116 @@
-# Домашнее задание к занятию «Kubernetes. Причины появления. Команда kubectl» - Муравский Артем
+# Домашнее задание к занятию «Базовые объекты K8S» - Муравский Артем
 
-## Задание 1. Установка MicroK8S
+## Задание 1. Создать Pod с именем hello-world
 
-### 1.1 Установка MicroK8S
+Манифест пода создан в файле [pod-hello-world.yaml](1.2/manifests/pod-hello-world.yaml):
 
-MicroK8S установлен на виртуальную машину `kuber` (Ubuntu 26.04 LTS, arm64) через OrbStack. Установка выполнялась по официальной инструкции:
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hello-world
+  labels:
+    app: hello-world
+spec:
+  containers:
+    - name: echoserver
+      image: ealen/echo-server:latest
+      env:
+        - name: PORT
+          value: "8080"
+      ports:
+        - containerPort: 8080
+```
+
+> **Почему не тот образ.** В задании указан `gcr.io/kubernetes-e2e-test-images/echoserver:2.2`, но на ARM64 он не работает. Все проверенные версии (2.2, 2.4, 2.5) падают с ошибкой `PANIC: unprotected error in call to Lua API`: ломается встроенный nginx+LuaJIT. Вместо него взял `ealen/echo-server`, он отдаёт тот же JSON с информацией о запросе.
+
+Применение манифеста:
 
 ```bash
-sudo apt update
-sudo apt install snapd
-sudo snap install microk8s --classic
+kubectl --kubeconfig ~/.kube/microk8s-dashboard.yaml -n default apply -f pod-hello-world.yaml
 ```
 
-Локальный пользователь добавлен в группу `microk8s`, права на папку конфигурации настроены:
+Проверка состояния подов:
+
+```
+NAME           READY   STATUS    RESTARTS   AGE
+hello-world    1/1     Running   0          6m39s
+netology-web   1/1     Running   0          6m39s
+```
+
+![kubectl get pods](1.2/img/kubectl-get-pods.png)
+
+Подключение к поду через port-forward и проверка ответа:
 
 ```bash
-sudo usermod -a -G microk8s $USER
-sudo chown -f -R $USER ~/.kube
+kubectl --kubeconfig ~/.kube/microk8s-dashboard.yaml -n default port-forward pod/hello-world 18080:8080
+curl http://localhost:18080/
 ```
 
-Проверка статуса кластера:
+В ответе JSON с информацией о запросе: `hostname: hello-world`, заголовки и переменные окружения:
+
+![port-forward hello-world](1.2/img/port-forward-hello-world.png)
+
+## Задание 2. Создать Service и подключить его к Pod
+
+Манифесты пода и сервиса: [pod-netology-web.yaml](1.2/manifests/pod-netology-web.yaml) и [service-netology-svc.yaml](1.2/manifests/service-netology-svc.yaml).
+
+Под `netology-web`:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: netology-web
+  labels:
+    app: netology-web
+spec:
+  containers:
+    - name: echoserver
+      image: ealen/echo-server:latest
+      env:
+        - name: PORT
+          value: "8080"
+      ports:
+        - containerPort: 8080
+```
+
+Сервис `netology-svc` (ClusterIP, порт 80 → контейнер 8080) селектором `app: netology-web` подключается к поду `netology-web`:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: netology-svc
+spec:
+  selector:
+    app: netology-web
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+```
+
+Применение манифестов:
 
 ```bash
-microk8s status --wait-ready
+kubectl --kubeconfig ~/.kube/microk8s-dashboard.yaml -n default apply -f pod-netology-web.yaml -f service-netology-svc.yaml
 ```
 
+Проверка сервиса:
+
 ```
-microk8s is running
-high-availability: no
-  datastore master nodes: 127.0.0.1:19001
-  datastore standby nodes: none
-addons:
-  enabled:
-    dashboard
-    dns
-    ha-cluster
-    helm
-    helm3
-    metrics-server
+NAME           TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+netology-svc   ClusterIP   10.152.183.33   <none>        80/TCP    25m
 ```
 
-Версия кластера:
+Подключение к сервису через port-forward и проверка ответа:
 
 ```bash
-microk8s kubectl get nodes
+kubectl --kubeconfig ~/.kube/microk8s-dashboard.yaml -n default port-forward svc/netology-svc 18082:80
+curl http://localhost:18082/
 ```
 
-```
-NAME    STATUS   ROLES    AGE   VERSION
-kuber   Ready    <none>   79m   v1.35.6
-```
+Ответ пришёл с пода `netology-web` (`hostname: netology-web`), значит сервис нашёл нужный под и отдал его ответ:
 
-### 1.2 Установка dashboard
-
-Dashboard включён через addon:
-
-```bash
-microk8s enable dashboard
-```
-
-Все поды дашборда в статусе `Running`:
-
-```
-NAME                                                    READY   STATUS    RESTARTS   AGE
-kubernetes-dashboard-api-75778f6547-2f28q               1/1     Running   0          10m
-kubernetes-dashboard-auth-7598ff7f-qz2mf                1/1     Running   0          10m
-kubernetes-dashboard-kong-78b7499b45-wsttm              1/1     Running   0          10m
-kubernetes-dashboard-metrics-scraper-594bbfb84b-g9hlf   1/1     Running   0          10m
-kubernetes-dashboard-web-7f7574785f-tbkv6               1/1     Running   0          10m
-```
-
-### 1.3 Сертификат для подключения к внешнему IP-адресу
-
-В файл `/var/snap/microk8s/current/certs/csr.conf.template` добавлен внешний IP-адрес виртуальной машины `192.168.139.27` (строка `IP.3` перед маркером `#MOREIPS`, который MicroK8s заменяет остальными IP узла при генерации):
-
-```
-[ alt_names ]
-DNS.1 = kubernetes
-DNS.2 = kubernetes.default
-DNS.3 = kubernetes.default.svc
-DNS.4 = kubernetes.default.svc.cluster
-DNS.5 = kubernetes.default.svc.cluster.local
-IP.1 = 127.0.0.1
-IP.2 = 10.152.183.1
-IP.3 = 192.168.139.27
-#MOREIPS
-```
-
-Сертификаты перевыпущены:
-
-```bash
-sudo microk8s refresh-certs --cert server.crt
-sudo microk8s refresh-certs --cert front-proxy-client.crt
-```
-
-`server.crt` обслуживает внешнее подключение к API-серверу (порт 16443), поэтому важен именно он; `front-proxy-client.crt` перевыпускается по инструкции к заданию.
-
-Проверка, что сертификат сервера API содержит внешний IP в `Subject Alternative Name`:
-
-```
-X509v3 Subject Alternative Name:
-    DNS:kubernetes, DNS:kubernetes.default, DNS:kubernetes.default.svc,
-    DNS:kubernetes.default.svc.cluster, DNS:kubernetes.default.svc.cluster.local,
-    IP Address:127.0.0.1, IP Address:10.152.183.1,
-    IP Address:192.168.139.27, IP Address:192.168.139.27,
-    IP Address:FD07:B51A:CC66:0:54BB:6FFF:FED3:1284
-```
-
-Внешний IP `192.168.139.27` указан дважды: добавлен вручную в шаблон (`IP.3`) и дополнительно подставлен MicroK8s автоматически вместо маркера `#MOREIPS` — дублирование SAN допустимо.
-
-Подключение с рабочей машины к кластеру через внешний IP работает:
-
-```bash
-kubectl --kubeconfig ~/.kube/microk8s-dashboard.yaml get nodes
-```
-
-## Задание 2. Установка и настройка локального kubectl
-
-### 2.1 Установка kubectl на локальную машину
-
-kubectl установлен на рабочую машину (macOS, arm64):
-
-```bash
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/darwin/arm64/kubectl"
-chmod +x kubectl
-sudo mv ./kubectl /usr/local/bin/kubectl
-```
-
-Версия клиента:
-
-```bash
-kubectl version --client
-```
-
-```
-Client Version: v1.33.9
-Kustomize Version: v5.6.0
-```
-
-Автодополнение kubectl в bash:
-
-```bash
-source <(kubectl completion bash)
-echo "source <(kubectl completion bash)" >> ~/.bashrc
-```
-
-### 2.2 Настройка локального подключения к кластеру
-
-Конфигурация подключения получена с кластера и сохранена локально:
-
-```bash
-microk8s config > ~/.kube/microk8s-dashboard.yaml
-```
-
-Проверка подключения к кластеру с рабочей машины:
-
-```bash
-kubectl --kubeconfig ~/.kube/microk8s-dashboard.yaml get nodes
-```
-
-![kubectl get nodes](1.1/img/kubectl-nodes.png)
-
-Узел `kuber` доступен, статус `Ready`, версия кластера `v1.35.6`.
-
-### 2.3 Подключение к дашборду с помощью port-forward
-
-Проброс порта с виртуальной машины на хост:
-
-```bash
-microk8s kubectl port-forward -n kubernetes-dashboard service/kubernetes-dashboard-kong-proxy 10443:443 --address 0.0.0.0
-```
-
-Дашборд доступен в браузере на рабочей машине:
-
-```
-https://localhost:10443
-```
-
-Для входа создан служебный аккаунт с правами кластерного администратора:
-
-```bash
-microk8s kubectl create serviceaccount dash-admin -n kubernetes-dashboard
-microk8s kubectl create clusterrolebinding dash-admin --clusterrole=cluster-admin --serviceaccount=kubernetes-dashboard:dash-admin
-microk8s kubectl create token dash-admin -n kubernetes-dashboard
-```
-
-Скриншот дашборда:
-
-![Kubernetes Dashboard](1.1/img/dashboard.png)
-
-Для сохранения проброса порта после перезагрузок виртуальной машины создан systemd-сервис `dashboard-proxy` (запускает `kubectl port-forward` с автоперезапуском).
+![port-forward netology-svc](1.2/img/port-forward-netology-svc.png)
