@@ -1,116 +1,77 @@
-# Домашнее задание к занятию «Базовые объекты K8S» - Муравский Артем
+# Домашнее задание к занятию «Запуск приложений в K8S» - Муравский Артем
 
-## Задание 1. Создать Pod с именем hello-world
 
-Манифест пода создан в файле [pod-hello-world.yaml](1.2/manifests/pod-hello-world.yaml):
+## Задание 1
 
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: hello-world
-  labels:
-    app: hello-world
-spec:
-  containers:
-    - name: echoserver
-      image: ealen/echo-server:latest
-      env:
-        - name: PORT
-          value: "8080"
-      ports:
-        - containerPort: 8080
-```
+1. Создаем *deployment* из манифеста [deployment1.yaml](manifests/deployment1.yaml) командой
+  `kubectl apply -f deployment1.yaml`
 
-> **Почему не тот образ.** В задании указан `gcr.io/kubernetes-e2e-test-images/echoserver:2.2`, но на ARM64 он не работает. Все проверенные версии (2.2, 2.4, 2.5) падают с ошибкой `PANIC: unprotected error in call to Lua API`: ломается встроенный nginx+LuaJIT. Вместо него взял `ealen/echo-server`, он отдаёт тот же JSON с информацией о запросе.
+  Проверяем наличие подов командой
+  `kubectl get pods`
 
-Применение манифеста:
+  Скриншот результата выполнения команды
+  ![pods_of_deployment1](img/screen1.png)
 
-```bash
-kubectl --kubeconfig ~/.kube/microk8s-dashboard.yaml -n default apply -f pod-hello-world.yaml
-```
 
-Проверка состояния подов:
+2. Увеличиваем количество реплик приложения до двух путем изменения значения параметра *replicas* в манифесте [deployment1.yaml](manifests/deployment1.yaml)
 
-```
-NAME           READY   STATUS    RESTARTS   AGE
-hello-world    1/1     Running   0          6m39s
-netology-web   1/1     Running   0          6m39s
-```
 
-![kubectl get pods](1.2/img/kubectl-get-pods.png)
+3. Проверяем наличие и количество подов командой
+  `kubectl get pods`
 
-Подключение к поду через port-forward и проверка ответа:
+  Скриншот результата выполнения команды
+  ![pods_of_deployment1_scale](img/screen2.png)
 
-```bash
-kubectl --kubeconfig ~/.kube/microk8s-dashboard.yaml -n default port-forward pod/hello-world 18080:8080
-curl http://localhost:18080/
-```
 
-В ответе JSON с информацией о запросе: `hostname: hello-world`, заголовки и переменные окружения:
+4. Создаем *service* из манифеста [service1.yaml](manifests/service1.yaml) командой
+  `kubectl apply -f service1.yaml`
 
-![port-forward hello-world](1.2/img/port-forward-hello-world.png)
 
-## Задание 2. Создать Service и подключить его к Pod
+5. Создаем отдельный *pod* из манифеста [pod1.yaml](manifests/pod1.yaml) командой
+  `kubectl apply -f pod1.yaml`
 
-Манифесты пода и сервиса: [pod-netology-web.yaml](1.2/manifests/pod-netology-web.yaml) и [service-netology-svc.yaml](1.2/manifests/service-netology-svc.yaml).
+  Проверяем наличие и количество подов командой
+  `kubectl get pods`
 
-Под `netology-web`:
+  Скриншот результата выполнения команды
+  ![pods_multitool](img/screen3.png)
 
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: netology-web
-  labels:
-    app: netology-web
-spec:
-  containers:
-    - name: echoserver
-      image: ealen/echo-server:latest
-      env:
-        - name: PORT
-          value: "8080"
-      ports:
-        - containerPort: 8080
-```
 
-Сервис `netology-svc` (ClusterIP, порт 80 → контейнер 8080) селектором `app: netology-web` подключается к поду `netology-web`:
+  Осуществляем подключение к созданному поду с помощью команды
+  `kubectl exec -i -t pods/multitool -- bash`
 
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: netology-svc
-spec:
-  selector:
-    app: netology-web
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 8080
-```
+  Тестируем возможность подключения к приложению *nginx* помощью команды
+  `curl my-service:80`
 
-Применение манифестов:
+  Скриншот результата выполнения команды
+  ![curl1](img/screen4.png)
 
-```bash
-kubectl --kubeconfig ~/.kube/microk8s-dashboard.yaml -n default apply -f pod-netology-web.yaml -f service-netology-svc.yaml
-```
+  Тестируем возможность подключения к приложению *multitool* помощью команды
+  `curl my-service:8080`
 
-Проверка сервиса:
+  Скриншот результата выполнения команды
+  ![curl2](img/screen5.png)
 
-```
-NAME           TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
-netology-svc   ClusterIP   10.152.183.33   <none>        80/TCP    25m
-```
+---
 
-Подключение к сервису через port-forward и проверка ответа:
+## Задание 2
 
-```bash
-kubectl --kubeconfig ~/.kube/microk8s-dashboard.yaml -n default port-forward svc/netology-svc 18082:80
-curl http://localhost:18082/
-```
+1. Создаем *deployment* из манифеста [deployment2.yaml](manifests/deployment2.yaml) командой
+  `kubectl apply -f deployment2.yaml`
 
-Ответ пришёл с пода `netology-web` (`hostname: netology-web`), значит сервис нашёл нужный под и отдал его ответ:
+  Проверяем наличие подов командой
+  `kubectl get pods`
 
-![port-forward netology-svc](1.2/img/port-forward-netology-svc.png)
+  Скриншот результата выполнения команды
+  ![pods_of_deployment2](img/screen6.png)
+
+2. Убеждаемся, что *nginx* не стартовал, так как у подов *READY* имеет значение `0`, а *STATUS* `Init:0/1`, что можно интерпретировать как отсутсвие старта контейнера *nginx* по причине невозможности запуска init-контейнера
+
+3. Создаем *service* из манифеста [service2.yaml](manifests/service2.yaml) командой
+  `kubectl apply -f service2.yaml`
+
+4. Проверяем наличие подов командой
+  `kubectl get pods`
+
+  Скриншот результата выполнения команд
+  ![pods_of_deployment2_init](img/screen7.png)
