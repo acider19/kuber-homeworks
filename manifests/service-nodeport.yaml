@@ -9,8 +9,9 @@ spec:
     - name: nginx-http
       protocol: TCP
       port: 80
-      targetPort: 80
+      nodePort: 30080
     - name: multitool-http
       protocol: TCP
       port: 8080
-      targetPort: 8080
+      nodePort: 30880
+  type: NodePort

@@ -1,77 +1,70 @@
-# Домашнее задание к занятию «Запуск приложений в K8S» - Муравский Артем
+# Домашнее задание к занятию «Сетевое взаимодействие в Kubernetes» - Муравский Артем
 
 
 ## Задание 1
 
-1. Создаем *deployment* из манифеста [deployment1.yaml](manifests/deployment1.yaml) командой
-  `kubectl apply -f deployment1.yaml`
+1. Создаем *deployment* из манифеста [deployment-multi-container.yaml](manifests/deployment-multi-container.yaml) командой `kubectl apply -f deployment-multi-container.yaml`
 
-  Проверяем наличие подов командой
-  `kubectl get pods`
+2. Создаем *service* из манифеста [service-clusterip.yaml](manifests/service-clusterip.yaml) командой `kubectl apply -f service-clusterip.yaml`
 
+3. Проверяем доступность приложений изнутри кластера
+  
+  Создаем тестовый под и подключаемся к нему, выполнив команду `kubectl run test-pod --image=wbitt/network-multitool --rm -it -- sh`
+
+  Тестируем возможность подключения к приложению *nginx* помощью команды `curl my-service:9001`
+  
   Скриншот результата выполнения команды
-  ![pods_of_deployment1](img/screen1.png)
+  
+  ![test_nginx_clusterip](img/screen1.png)
 
-
-2. Увеличиваем количество реплик приложения до двух путем изменения значения параметра *replicas* в манифесте [deployment1.yaml](manifests/deployment1.yaml)
-
-
-3. Проверяем наличие и количество подов командой
-  `kubectl get pods`
-
+  Тестируем возможность подключения к приложению *multitool* помощью команды `curl my-service:9002`
+  
   Скриншот результата выполнения команды
-  ![pods_of_deployment1_scale](img/screen2.png)
+  
+  ![test_multitool_clusterip](img/screen2.png)
 
+4. Создаем *service* из манифеста [service-nodeport.yaml](manifests/service-nodeport.yaml) командой `kubectl apply -f service-nodeport.yaml`
 
-4. Создаем *service* из манифеста [service1.yaml](manifests/service1.yaml) командой
-  `kubectl apply -f service1.yaml`
+5. Проверяем доступность приложений снаружи кластера
 
-
-5. Создаем отдельный *pod* из манифеста [pod1.yaml](manifests/pod1.yaml) командой
-  `kubectl apply -f pod1.yaml`
-
-  Проверяем наличие и количество подов командой
-  `kubectl get pods`
-
+  Тестируем возможность подключения к приложению *nginx* помощью команды `curl 127.0.0.1:30080`
+  
   Скриншот результата выполнения команды
-  ![pods_multitool](img/screen3.png)
+  
+  ![test_nginx_nodeport](img/screen3.png)
 
-
-  Осуществляем подключение к созданному поду с помощью команды
-  `kubectl exec -i -t pods/multitool -- bash`
-
-  Тестируем возможность подключения к приложению *nginx* помощью команды
-  `curl my-service:80`
-
+  Тестируем возможность подключения к приложению *multitool* помощью команды `curl 127.0.0.1:30880`
+  
   Скриншот результата выполнения команды
-  ![curl1](img/screen4.png)
-
-  Тестируем возможность подключения к приложению *multitool* помощью команды
-  `curl my-service:8080`
-
-  Скриншот результата выполнения команды
-  ![curl2](img/screen5.png)
+  
+  ![test_multitool_nodeport](img/screen4.png)
 
 ---
 
 ## Задание 2
 
-1. Создаем *deployment* из манифеста [deployment2.yaml](manifests/deployment2.yaml) командой
-  `kubectl apply -f deployment2.yaml`
+1. Создаем *deployment* из манифеста [deployment-frontend.yaml](manifests/deployment-frontend.yaml) командой `kubectl apply -f deployment-frontend.yaml`
+  
+  Создаем *deployment* из манифеста [deployment-backend.yaml](manifests/deployment-backend.yaml) командой `kubectl apply -f deployment-backend.yaml`
 
-  Проверяем наличие подов командой
-  `kubectl get pods`
+2. Создаем *service* из манифеста [service-frontend.yaml](manifests/service-frontend.yaml) командой `kubectl apply -f service-frontend.yaml`
 
+  Создаем *service* из манифеста [service-backend.yaml](manifests/service-backend.yaml) командой `kubectl apply -f service-backend.yaml`
+
+3. Ingress-контроллер установлен командой `kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.1/deploy/static/provider/cloud/deploy.yaml`
+
+4. Создаем *ingress* из манифеста [ingress.yaml](manifests/ingress.yaml) командой `kubectl apply -f ingress.yaml`
+
+5. Проверяем доступность приложений снаружи кластера
+
+  Тестируем возможность подключения к приложению *frontend* помощью команды `curl http://127.0.0.1`
+  
   Скриншот результата выполнения команды
-  ![pods_of_deployment2](img/screen6.png)
+  
+  ![test_frontend](img/screen5.png)
 
-2. Убеждаемся, что *nginx* не стартовал, так как у подов *READY* имеет значение `0`, а *STATUS* `Init:0/1`, что можно интерпретировать как отсутсвие старта контейнера *nginx* по причине невозможности запуска init-контейнера
-
-3. Создаем *service* из манифеста [service2.yaml](manifests/service2.yaml) командой
-  `kubectl apply -f service2.yaml`
-
-4. Проверяем наличие подов командой
-  `kubectl get pods`
-
-  Скриншот результата выполнения команд
-  ![pods_of_deployment2_init](img/screen7.png)
+  Тестируем возможность подключения к приложению *backend* помощью команды `curl http://127.0.0.1/api`
+  
+  Скриншот результата выполнения команды
+  
+  ![test_backend](img/screen6.png)
