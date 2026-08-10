@@ -23,7 +23,7 @@
 
 ## Задание 2
 
-1. 2. Создаем *deployment*, *pv*, *pvc* из манифеста [pv-pvc.yaml](manifests/pv-pvc.yaml) командой `kubectl apply -f pv-pvc.yaml`
+1-2. Создаем *deployment*, *pv*, *pvc* из манифеста [pv-pvc.yaml](manifests/pv-pvc.yaml) командой `kubectl apply -f pv-pvc.yaml`
 
 Проверяем наличие создавшихся *pv* и *pvc*, последовательно выполнив команды `kubectl get pv` и `kubectl get pvc`. Обращаем внимание, что у обоих объектов статус `Bound`
 
@@ -74,7 +74,7 @@
 
 ## Задание 3
 
-1. 2. Создаем *deployment*, *pv*, *pvc*, *sc* из манифеста [sc.yaml](manifests/sc.yaml) командой `kubectl apply -f sc.yaml`
+1-2. Создаем *deployment*, *pv*, *pvc*, *sc* из манифеста [sc.yaml](manifests/sc.yaml) командой `kubectl apply -f sc.yaml`
 
 Проверяем наличие создавшихся *sc* и *pvc*, выполнив команду `kubectl get sc,pvc`. Обращаем внимание, что у *pvc* у параметра `STORAGECLASS` установлено значение `netology-sc`
 
