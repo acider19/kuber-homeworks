@@ -1,0 +1,62 @@
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: netology-pv # ДОПОЛНИТЕ: Имя хранилища
+spec:
+  capacity:
+    storage: 1Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /temp # КЛЮЧЕВОЕ: Путь к директории на ноде (хосте, на котором развёрнут кластер)
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: netology-pvc # ДОПОЛНИТЕ: Имя PVC
+spec:
+  volumeName: netology-pv # ДОПОЛНИТЕ: Имя PV, к которому будет привязан PVC, должен совпадать с созданным ранее PV
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 1Gi # ДОПОЛНИТЕ: Какой объём хранилища вы хотите передать в контейнер. Должно быть меньше или равно параметру storage из PV
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-exchange-pvc
+spec:
+  replicas: 1 # ЗАДАНИЕ: Укажите количество реплик
+  selector:
+    matchLabels:
+      app: my-app # ДОПОЛНИТЕ: Метка для селектора
+  template:
+    metadata:
+      labels:
+        app: my-app # ПОВТОРИТЕ: Метка из selector.matchLabels
+    spec:
+      containers:
+      - name: busybox-writer # ДОПОЛНИТЕ: Имя первого контейнера
+        image: busybox
+        command: ["/bin/sh", "-c"]
+        args: ["while true; do echo $(date) >> /temp/output.txt; sleep 5; done"] # КЛЮЧЕВОЕ: Команда записи данных в файл в директории из секции volumeMounts контейнера
+        volumeMounts:
+        - name: volume-shared # ДОПОЛНИТЕ: Имя монтируемого раздела. Должно совпадать с именем хранилища, объявленного на уровне пода
+          mountPath: /temp # КЛЮЧЕВОЕ: Путь монтирования хранилища внутри контейнера 1
+      - name: multitool-reader # ДОПОЛНИТЕ: Имя второго контейнера
+        image: wbitt/network-multitool
+        command: ["/bin/sh", "-c"]
+        args: ["tail -f /temp/output.txt"] # КЛЮЧЕВОЕ: Команда для чтения данных из файла, расположенного в директории, указанной в volumeMounts контейнера
+        volumeMounts:
+        - name: volume-shared # ДОПОЛНИТЕ: Имя монтируемого раздела. Должно совпадать с именем хранилища, объявленного на уровне пода
+          mountPath: /temp # КЛЮЧЕВОЕ: Путь монтирования хранилища внутри контейнера 2
+      volumes:
+      - name: volume-shared # ДОПОЛНИТЕ: Имя монтируемого раздела хранилища
+        persistentVolumeClaim:
+          claimName: netology-pvc # КЛЮЧЕВОЕ: Совпадает с именем PVC объявленного ранее

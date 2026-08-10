@@ -1,0 +1,68 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: netology-sc
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: netology-sc-pv
+spec:
+  capacity:
+    storage: 1Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: netology-sc
+  hostPath:
+    path: /temp
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: netology-sc-pvc
+spec:
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: netology-sc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-exchange-sc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: my-app-sc
+  template:
+    metadata:
+      labels:
+        app: my-app-sc
+    spec:
+      containers:
+      - name: busybox-writer
+        image: busybox
+        command: ["/bin/sh", "-c"]
+        args: ["while true; do echo $(date) >> /temp/output.txt; sleep 5; done"]
+        volumeMounts:
+        - name: volume-shared
+          mountPath: /temp
+      - name: multitool-reader
+        image: busybox
+        command: ["/bin/sh", "-c"]
+        args: ["tail -f /temp/output.txt"]
+        volumeMounts:
+        - name: volume-shared
+          mountPath: /temp
+      volumes:
+      - name: volume-shared
+        persistentVolumeClaim:
+          claimName: netology-sc-pvc
