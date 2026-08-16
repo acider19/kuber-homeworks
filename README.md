@@ -1,89 +1,97 @@
-# Домашнее задание к занятию «Хранение в K8s» - Муравский Артем
-
-
-## Задание 1
-
-Создаем *deployment* из манифеста [containers-data-exchange.yaml](manifests/containers-data-exchange.yaml) командой `kubectl apply -f containers-data-exchange.yaml`
-
-Выведем описание пода с контейнерами с помощью команды `kubectl describe pods/data-exchange-5ccb9f4588-7psqs`
-
-Скриншоты результата выполнения команды
-
-![check_describe_1](img/screen2-1.png)
-![check_describe_2](img/screen2-2.png)
-![check_describe_3](img/screen2-3.png)
-
-Проверяем, что контейнером *busybox-writer* осуществляется запись каждые 5 с в файл `/temp/output.txt` и этот файл можно прочитать контейнером *multitool-reader*, для этого выполняем команду `kubectl exec -it data-exchange-5ccb9f4588-7psqs -c multitool-reader -- tail -f /temp/output.txt`
-
-Скриншот результата выполнения команды
-
-![check_writing](img/screen1.png)
+# Домашнее задание к занятию «Настройка приложений и управление доступом в Kubernetes» - Муравский Артем
 
 ---
 
-## Задание 2
+## Задание 1: Работа с ConfigMaps
 
-1-2. Создаем *deployment*, *pv*, *pvc* из манифеста [pv-pvc.yaml](manifests/pv-pvc.yaml) командой `kubectl apply -f pv-pvc.yaml`
+Создаем *ConfigMap* с веб-страницей из манифеста [configmap-web.yaml](manifests/configmap-web.yaml):
 
-Проверяем наличие создавшихся *pv* и *pvc*, последовательно выполнив команды `kubectl get pv` и `kubectl get pvc`. Обращаем внимание, что у обоих объектов статус `Bound`
+```bash
+kubectl apply -f manifests/configmap-web.yaml
+```
 
-Скриншот результата выполнения команды
+Создаем *deployment* (nginx + multitool) из манифеста [deployment.yaml](manifests/deployment.yaml) и *service* из [service.yaml](manifests/service.yaml):
 
-![check_pv_pvc](img/screen4.png)
+```bash
+kubectl apply -f manifests/deployment.yaml
+kubectl apply -f manifests/service.yaml
+```
 
-3. Проверяем, что контейнером *busybox-writer* осуществляется запись каждые 5 с в файл `/temp/output.txt` и этот файл можно прочитать контейнером *multitool-reader*, для этого выполняем команду `kubectl exec -it data-exchange-pvc-76bcbf449b-bdzz2 -c multitool-reader -- tail -f /temp/output.txt`
+ConfigMap монтируется в контейнер *nginx* в директорию `/usr/share/nginx/html`, где nginx по умолчанию отдаёт статические страницы.
 
-Скриншот результата выполнения команды
+Проверяем доступность веб-страницы из контейнера *multitool* (контейнеры пода делят network namespace, поэтому обращение идёт на `localhost`):
 
-![check_writing_2](img/screen3.png)
-
-4. Удаляем *deployment* и *pvc* командами `kubectl delete deployment data-exchange-pvc` и `kubectl delete pvc netology-pvc` соответственно
-
-Скриншот результата выполнения команд
-
-![delete_deploy_pvc](img/screen5.png)
-
-Проверяем в каком состоянии находится *pv* с помощью команды `kubectl describe pv netology-pv`
-
-Скриншот результата выполнения команды
-
-![describe_pv](img/screen6.png)
-
-В выводе можно увидеть, что у *pv* `ReclaimPolicy: Retain` и  `Status: Released`. Так как `ReclaimPolicy` имеет значение `Retain`, то Kubernetes не удаляет данные и *pv* остаётся в статусе `Released`, пока *pv* не освободят/не удалят вручную
-
-5. Проверяем сохранился ли файл `output.txt`, в который записывал данные контейнер *busybox*.
-
-  Примечание:
-  *Так как в качестве кластера используется встроенный Kubernetes в OrbStack на macOS (k3s (Rancher) версии v1.35.6+orb1 на базе containerd), единственная нода orbstack (control-plane) работает внутри легковесной Linux-VM OrbStack, то напрямую на ноду подключиться по ssh нельзя и нужно использовать команду `kubectl debug node/orbstack -it --image=busybox -- sh`, которая в том числе монтирует корень файловой системы ноды /, в /host внутри пода*
-
-Выполняем подключение на ноду и проверяем наличие файла `output.txt` с помощью команды `ls -la /host/temp/output.txt`
+```bash
+kubectl exec -it <pod> -c multitool -- curl http://localhost
+```
 
 Скриншот результата выполнения команды
 
-![ls_file](img/screen7.png)
-
-Удаляем *pv* с помощью команды `kubectl delete pv netology-pv`
-
-Скриншот результата выполнения команды
-
-![delete_pv](img/screen8.png)
-
-Выполняем подключение на ноду и проверяем наличие файла `output.txt` с помощью команды `ls -la /host/temp/output.txt` и видим, что файл остался на файловой системе ноды (скриншот не приводится, так как полностью аналогичен скриншоту предыдущей проверке наличия файла). Это можно объяснить тем, что удаление *pv* удаляет только объект k8s, hostPath-данные на диске не управляются кластером и не удаляются.
+![check_curl](img/screen1.png)
 
 ---
 
-## Задание 3
+## Задание 2: Настройка HTTPS с Secrets
 
-1-2. Создаем *deployment*, *pv*, *pvc*, *sc* из манифеста [sc.yaml](manifests/sc.yaml) командой `kubectl apply -f sc.yaml`
+Генерируем самоподписанный SSL-сертификат:
 
-Проверяем наличие создавшихся *sc* и *pvc*, выполнив команду `kubectl get sc,pvc`. Обращаем внимание, что у *pvc* у параметра `STORAGECLASS` установлено значение `netology-sc`
+```bash
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout tls.key -out tls.crt -subj "/CN=myapp.example.com"
+```
+
+Создаем *Secret* типа `kubernetes.io/tls` из манифеста [secret-tls.yaml](manifests/secret-tls.yaml):
+
+```bash
+kubectl create secret tls tls-secret --key=tls.key --cert=tls.crt
+# или
+kubectl apply -f manifests/secret-tls.yaml
+```
+
+Создаем *Ingress* с TLS из манифеста [ingress-tls.yaml](manifests/ingress-tls.yaml):
+
+```bash
+kubectl apply -f manifests/ingress-tls.yaml
+```
+
+Проверяем HTTPS-доступ (так как сертификат самоподписанный, используем `-k`, а имя `myapp.example.com` резолвим через `--resolve` на адрес ingress-контроллера):
+
+```bash
+curl -k --resolve myapp.example.com:443:127.0.0.1 https://myapp.example.com/
+```
 
 Скриншот результата выполнения команды
 
-![check_sc_pvc](img/screen9.png)
+![check_https](img/screen2.png)
 
-3. Проверяем, что контейнером *busybox-writer* осуществляется запись каждые 5 с в файл `/temp/output.txt` и этот файл можно прочитать контейнером *multitool-reader*, для этого выполняем команду `kubectl exec -it data-exchange-sc-6dbfb7c5c7-vqc5d -c multitool-reader -- tail -f /temp/output.txt`
+---
+
+## Задание 3: Настройка RBAC
+
+Генерируем сертификат пользователя `student`:
+
+```bash
+openssl genrsa -out developer.key 2048
+openssl req -new -key developer.key -out developer.csr -subj "/CN=student"
+openssl x509 -req -in developer.csr \
+  -CA client-ca.crt -CAkey client-ca.key \
+  -CAcreateserial -out developer.crt -days 365
+```
+
+Создаем *Role* (только просмотр логов и описание подов) из манифеста [role-pod-reader.yaml](manifests/role-pod-reader.yaml) и *RoleBinding* для пользователя `student` из [rolebinding-developer.yaml](manifests/rolebinding-developer.yaml):
+
+```bash
+kubectl apply -f manifests/role-pod-reader.yaml
+kubectl apply -f manifests/rolebinding-developer.yaml
+```
+
+Проверяем права пользователя: список подов доступен, а доступ к секретам запрещён:
+
+```bash
+kubectl get pods --as=student
+kubectl get secrets --as=student
+```
 
 Скриншот результата выполнения команды
 
-![check_writing_3](img/screen10.png)
+![check_rbac](img/screen3.png)
