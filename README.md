@@ -1,97 +1,100 @@
-# Домашнее задание к занятию «Настройка приложений и управление доступом в Kubernetes» - Муравский Артем
+# Домашнее задание к занятию «Компоненты Kubernetes»
 
 ---
 
-## Задание 1: Работа с ConfigMaps
+## Расчёт ресурсов кластера
 
-Создаем *ConfigMap* с веб-страницей из манифеста [configmap-web.yaml](manifests/configmap-web.yaml):
+### Сколько ресурсов нужно приложению
 
-```bash
-kubectl apply -f manifests/configmap-web.yaml
+Считаем потребление по каждому компоненту:
+
+| Компонент | RAM / копия | CPU / копия | Копий | Всего RAM | Всего CPU |
+|-----------|-------------|-------------|-------|-----------|-----------|
+| База данных (HA) | 4 ГБ | 1 core | 3 | 12 ГБ | 3 cores |
+| Кеш (HA) | 4 ГБ | 1 core | 3 | 12 ГБ | 3 cores |
+| Фронтенд | 50 МБ | 0.2 core | 5 | 250 МБ | 1 core |
+| Бекенд | 600 МБ | 1 core | 10 | 6 ГБ | 10 cores |
+| **Итого** | | | **21 под** | **30.25 ГБ** | **17 cores** |
+
+### Что ещё живёт на нодах помимо приложения
+
+На каждой ноде работает kubelet, kube-proxy, сетевой плей (CNI) и сама ОС. На это нужно примерно:
+
+| Компонент | RAM | CPU |
+|-----------|-----|-----|
+| kubelet | ~200 МБ | ~0.2 core |
+| kube-proxy | ~100 МБ | ~0.1 core |
+| CNI (Calico / Cilium / Flannel) | ~150 МБ | ~0.1 core |
+| Системные (OS, systemd) | ~500 МБ | ~0.5 core |
+| **Итого на ноду** | **~1 ГБ** | **~1 core** |
+
+### Control plane
+
+Помимо рабочих нод, в кластере нужна master-нода — на ней работают компоненты управления: kube-apiserver, etcd, scheduler и controller-manager. Без неё кластер не будет обрабатывать ни один запрос.
+
+Для проекта такого размера достаточно одной master-ноды с ресурсами **8 ГБ RAM / 4 core**. Этого хватает для кластера до 50 нод и 2000 подов. Если в будущем понадобится отказоустойчивость control plane — можно масштабировать до 3 master-нод со встроенным etcd.
+
+### Сколько рабочих нод нужно
+
+Берём ноды по 16 ГБ RAM / 8 core — это стандартный размер, который хорошо балансирует стоимость и возможности.
+
+**Без учёта отказоустойчивости:**
+
+Приложение требует 30.25 ГБ + 17 cores. Добавляем служебные ресурсы — на каждую ноду уходит ещё ~1 ГБ и ~1 core. Значит с ростом числа нод растёт и перерасход на системные процессы.
+
+При 3 нодах: 48 ГБ / 24 core — ресурсов хватает, но при выходе одной ноды останется 32 ГБ / 16 core, а нужно 30.25 + 3 (служебные на оставшихся) = 33.25 ГБ и 17 + 3 = 20 core. Не влезаем ни по RAM, ни по CPU.
+
+При 4 нодах: 64 ГБ / 32 core. При потере одной ноды — 48 ГБ / 24 core. Нужно 30.25 + 3 = 33.25 ГБ и 20 core. Всё влезает с запасом.
+
+**С учётом отказа одной ноды (N+1):**
+
+| Кол-во нод | Всего RAM | Всего CPU | После потери 1 ноды | Нужно приложению + служебные | Результат |
+|------------|-----------|-----------|----------------------|------------------------------|-----------|
+| 3 | 48 ГБ | 24 core | 32 ГБ / 16 core | 33.25 ГБ / 20 core | Не хватает |
+| **4** | **64 ГБ** | **32 core** | **48 ГБ / 24 core** | **33.25 ГБ / 20 core** | **Хватает** |
+
+### Итоговая конфигурация кластера
+
+| Параметр | Значение |
+|----------|----------|
+| Master-нода | **1** (8 ГБ / 4 core) |
+| Рабочих нод | **4** (16 ГБ / 8 core каждая) |
+| Всего RAM в кластере | 72 ГБ |
+| Всего CPU в кластере | 36 core |
+| Запас после выхода 1 рабочей ноды | 14.75 ГБ RAM / 4 core |
+
+### Как распределить компоненты по нодам
+
+База данных и кеш — по три копии. Чтобы не потерять доступ при падении ноды, каждая копия должна лежать на своей ноде. Фронтенд и бекенд распределяем равномерно, с учётом того, что на четвёртой ноде держим запас:
+
+| Нода | Что на ней работает |
+|------|---------------------|
+| node-1 | DB×1, Cache×1, Frontend×2, Backend×3 |
+| node-2 | DB×1, Cache×1, Frontend×1, Backend×3 |
+| node-3 | DB×1, Cache×1, Frontend×1, Backend×3 |
+| node-4 | Frontend×1, Backend×1 |
+
+Для этого в Deployment'ах используется `podAntiAffinity` с `topologyKey: kubernetes.io/hostname` — Kubernetes сам не посадит две копии одного компонента на одну машину.
+
+### Схема кластера
+
 ```
-
-Создаем *deployment* (nginx + multitool) из манифеста [deployment.yaml](manifests/deployment.yaml) и *service* из [service.yaml](manifests/service.yaml):
-
-```bash
-kubectl apply -f manifests/deployment.yaml
-kubectl apply -f manifests/service.yaml
+                    ┌─────────────────────-┐
+                    │     Master нода      │
+                    │  8 ГБ RAM / 4 core   │
+                    │  apiserver, etcd,    │
+                    │  scheduler, ctrl-mgr │
+                    └──────────┬──────────-┘
+                               │
+          ┌────────────────────┼────────────────────┐
+          │                    │                    │
+┌─────────▼────────┐ ┌────────▼────────┐ ┌────────▼────────┐ ┌────────────────┐
+│     node-1       │ │     node-2      │ │     node-3      │ │    node-4      │
+│   16 ГБ / 8 core │ │  16 ГБ / 8 core │ │  16 ГБ / 8 core │ │ 16 ГБ / 8 core │
+│                  │ │                 │ │                 │ │                │
+│  DB-1            │ │  DB-2           │ │  DB-3           │ │                │
+│  Cache-1         │ │  Cache-2        │ │  Cache-3        │ │                │
+│  Frontend ×2     │ │  Frontend ×1    │ │  Frontend ×1    │ │ Frontend ×1    │
+│  Backend ×3      │ │  Backend ×3     │ │  Backend ×3     │ │ Backend ×1     │
+└──────────────────┘ └─────────────────┘ └─────────────────┘ └────────────────┘
 ```
-
-ConfigMap монтируется в контейнер *nginx* в директорию `/usr/share/nginx/html`, где nginx по умолчанию отдаёт статические страницы.
-
-Проверяем доступность веб-страницы из контейнера *multitool* (контейнеры пода делят network namespace, поэтому обращение идёт на `localhost`):
-
-```bash
-kubectl exec -it <pod> -c multitool -- curl http://localhost
-```
-
-Скриншот результата выполнения команды
-
-![check_curl](img/screen1.png)
-
----
-
-## Задание 2: Настройка HTTPS с Secrets
-
-Генерируем самоподписанный SSL-сертификат:
-
-```bash
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout tls.key -out tls.crt -subj "/CN=myapp.example.com"
-```
-
-Создаем *Secret* типа `kubernetes.io/tls` из манифеста [secret-tls.yaml](manifests/secret-tls.yaml):
-
-```bash
-kubectl create secret tls tls-secret --key=tls.key --cert=tls.crt
-# или
-kubectl apply -f manifests/secret-tls.yaml
-```
-
-Создаем *Ingress* с TLS из манифеста [ingress-tls.yaml](manifests/ingress-tls.yaml):
-
-```bash
-kubectl apply -f manifests/ingress-tls.yaml
-```
-
-Проверяем HTTPS-доступ (так как сертификат самоподписанный, используем `-k`, а имя `myapp.example.com` резолвим через `--resolve` на адрес ingress-контроллера):
-
-```bash
-curl -k --resolve myapp.example.com:443:127.0.0.1 https://myapp.example.com/
-```
-
-Скриншот результата выполнения команды
-
-![check_https](img/screen2.png)
-
----
-
-## Задание 3: Настройка RBAC
-
-Генерируем сертификат пользователя `student`:
-
-```bash
-openssl genrsa -out developer.key 2048
-openssl req -new -key developer.key -out developer.csr -subj "/CN=student"
-openssl x509 -req -in developer.csr \
-  -CA client-ca.crt -CAkey client-ca.key \
-  -CAcreateserial -out developer.crt -days 365
-```
-
-Создаем *Role* (только просмотр логов и описание подов) из манифеста [role-pod-reader.yaml](manifests/role-pod-reader.yaml) и *RoleBinding* для пользователя `student` из [rolebinding-developer.yaml](manifests/rolebinding-developer.yaml):
-
-```bash
-kubectl apply -f manifests/role-pod-reader.yaml
-kubectl apply -f manifests/rolebinding-developer.yaml
-```
-
-Проверяем права пользователя: список подов доступен, а доступ к секретам запрещён:
-
-```bash
-kubectl get pods --as=student
-kubectl get secrets --as=student
-```
-
-Скриншот результата выполнения команды
-
-![check_rbac](img/screen3.png)
