@@ -43,8 +43,7 @@ kubectl apply -f manifests/networkpolicy-cache.yaml
 **Поды и сервисы** — все три приложения в namespace `app` поднялись и готовы:
 
 ```
-kubectl get pods -n app -o wide
-kubectl get svc -n app
+kubectl get pods,svc -n app -o wide
 ```
 
 ![kubectl get pods,svc -n app](img/screen1.png)
