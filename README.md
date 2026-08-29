@@ -46,7 +46,7 @@ kubectl apply -f manifests/networkpolicy-cache.yaml
 kubectl get pods,svc -n app -o wide
 ```
 
-![kubectl get pods,svc -n app](img/screen1.png)
+![kubectl get pods,svc -n app -o wide](img/screen1.png)
 
 **Сетевые политики** — три политики на месте:
 
