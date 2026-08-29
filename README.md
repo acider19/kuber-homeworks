@@ -1,100 +1,124 @@
-# Домашнее задание к занятию «Компоненты Kubernetes» - Муравский Артем
+# Домашнее задание к занятию «Helm» - Муравский Артем
 
 ---
 
-## Расчёт ресурсов кластера
+## Задание 1. Подготовить Helm-чарт для приложения
 
-### Сколько ресурсов нужно приложению
+### Что было сделано
 
-Считаем потребление по каждому компоненту:
+Собрано приложение в один Helm-чарт `web-app`. Внутри два компонента: фронтенд на nginx и бэкенд на multitool. Каждый компонент — отдельный Deployment со своим Service. Версия образа вынесена в переменные чарта, поэтому одно и то же приложение можно развернуть с разными версиями для разных окружений — просто поменяв одну настройку.
 
-| Компонент | RAM / копия | CPU / копия | Копий | Всего RAM | Всего CPU |
-|-----------|-------------|-------------|-------|-----------|-----------|
-| База данных (HA) | 4 ГБ | 1 core | 3 | 12 ГБ | 3 cores |
-| Кеш (HA) | 4 ГБ | 1 core | 3 | 12 ГБ | 3 cores |
-| Фронтенд | 50 МБ | 0.2 core | 5 | 250 МБ | 1 core |
-| Бекенд | 600 МБ | 1 core | 10 | 6 ГБ | 10 cores |
-| **Итого** | | | **21 под** | **30.25 ГБ** | **17 cores** |
+Чтобы несколько копий могли жить в одном неймспейсе одновременно, имена ресурсов привязаны к имени релиза (через `_helpers.tpl`). Так вторая версия не затрёт первую.
 
-### Что ещё живёт на нодах помимо приложения
-
-На каждой ноде работает kubelet, kube-proxy, сетевой плей (CNI) и сама ОС. На это нужно примерно:
-
-| Компонент | RAM | CPU |
-|-----------|-----|-----|
-| kubelet | ~200 МБ | ~0.2 core |
-| kube-proxy | ~100 МБ | ~0.1 core |
-| CNI (Calico / Cilium / Flannel) | ~150 МБ | ~0.1 core |
-| Системные (OS, systemd) | ~500 МБ | ~0.5 core |
-| **Итого на ноду** | **~1 ГБ** | **~1 core** |
-
-### Control plane
-
-Помимо рабочих нод, в кластере нужна master-нода — на ней работают компоненты управления: kube-apiserver, etcd, scheduler и controller-manager. Без неё кластер не будет обрабатывать ни один запрос.
-
-Для проекта такого размера достаточно одной master-ноды с ресурсами **8 ГБ RAM / 4 core**. Этого хватает для кластера до 50 нод и 2000 подов. Если в будущем понадобится отказоустойчивость control plane — можно масштабировать до 3 master-нод со встроенным etcd.
-
-### Сколько рабочих нод нужно
-
-Берём ноды по 16 ГБ RAM / 8 core — это стандартный размер, который хорошо балансирует стоимость и возможности.
-
-**Без учёта отказоустойчивости:**
-
-Приложение требует 30.25 ГБ + 17 cores. Добавляем служебные ресурсы — на каждую ноду уходит ещё ~1 ГБ и ~1 core. Значит с ростом числа нод растёт и перерасход на системные процессы.
-
-При 3 нодах: 48 ГБ / 24 core — ресурсов хватает, но при выходе одной ноды останется 32 ГБ / 16 core, а нужно 30.25 + 3 (служебные на оставшихся) = 33.25 ГБ и 17 + 3 = 20 core. Не влезаем ни по RAM, ни по CPU.
-
-При 4 нодах: 64 ГБ / 32 core. При потере одной ноды — 48 ГБ / 24 core. Нужно 30.25 + 3 = 33.25 ГБ и 20 core. Всё влезает с запасом.
-
-**С учётом отказа одной ноды (N+1):**
-
-| Кол-во нод | Всего RAM | Всего CPU | После потери 1 ноды | Нужно приложению + служебные | Результат |
-|------------|-----------|-----------|----------------------|------------------------------|-----------|
-| 3 | 48 ГБ | 24 core | 32 ГБ / 16 core | 33.25 ГБ / 20 core | Не хватает |
-| **4** | **64 ГБ** | **32 core** | **48 ГБ / 24 core** | **33.25 ГБ / 20 core** | **Хватает** |
-
-### Итоговая конфигурация кластера
-
-| Параметр | Значение |
-|----------|----------|
-| Master-нода | **1** (8 ГБ / 4 core) |
-| Рабочих нод | **4** (16 ГБ / 8 core каждая) |
-| Всего RAM в кластере | 72 ГБ |
-| Всего CPU в кластере | 36 core |
-| Запас после выхода 1 рабочей ноды | 14.75 ГБ RAM / 4 core |
-
-### Как распределить компоненты по нодам
-
-База данных и кеш — по три копии. Чтобы не потерять доступ при падении ноды, каждая копия должна лежать на своей ноде. Фронтенд и бекенд распределяем равномерно, с учётом того, что на четвёртой ноде держим запас:
-
-| Нода | Что на ней работает |
-|------|---------------------|
-| node-1 | DB×1, Cache×1, Frontend×2, Backend×3 |
-| node-2 | DB×1, Cache×1, Frontend×1, Backend×3 |
-| node-3 | DB×1, Cache×1, Frontend×1, Backend×3 |
-| node-4 | Frontend×1, Backend×1 |
-
-Для этого в Deployment'ах используется `podAntiAffinity` с `topologyKey: kubernetes.io/hostname` — Kubernetes сам не посадит две копии одного компонента на одну машину.
-
-### Схема кластера
+### Структура чарта
 
 ```
-                    ┌─────────────────────-┐
-                    │     Master нода      │
-                    │  8 ГБ RAM / 4 core   │
-                    │  apiserver, etcd,    │
-                    │  scheduler, ctrl-mgr │
-                    └──────────┬──────────-┘
-                               │
-          ┌────────────────────┼────────────────────┐----------------┐
-          │                    │                    │                |
-┌─────────▼────────┐ ┌─────────▼───────┐ ┌──────────▼──────┐ ┌───────▼────────┐
-│     node-1       │ │     node-2      │ │     node-3      │ │    node-4      │
-│   16 ГБ / 8 core │ │  16 ГБ / 8 core │ │  16 ГБ / 8 core │ │ 16 ГБ / 8 core │
-│                  │ │                 │ │                 │ │                │
-│  DB-1            │ │  DB-2           │ │  DB-3           │ │                │
-│  Cache-1         │ │  Cache-2        │ │  Cache-3        │ │                │
-│  Frontend ×2     │ │  Frontend ×1    │ │  Frontend ×1    │ │ Frontend ×1    │
-│  Backend ×3      │ │  Backend ×3     │ │  Backend ×3     │ │ Backend ×1     │
-└──────────────────┘ └─────────────────┘ └─────────────────┘ └────────────────┘
+helm-chart/
+├── Chart.yaml
+├── values.yaml                  # значения по умолчанию
+├── values-app1.yaml             # значения для app1
+├── values-app2.yaml             # значения для app2
+└── templates/
+    ├── _helpers.tpl             # полное имя ресурса + лейблы
+    ├── frontend-deployment.yaml # deployment nginx
+    ├── backend-deployment.yaml  # deployment multitool
+    ├── frontend-service.yaml    # service frontend
+    └── backend-service.yaml     # service backend
 ```
+
+### Проверка чарта
+
+Перед деплоем выполнен `helm lint` — чарт валиден:
+
+```
+helm lint ./helm-chart
+```
+
+![helm lint](img/screen1.png)
+
+С помощью `helm template` проверено, какие манифесты сгенерируются, ещё до установки в кластер — образы и имена подхватились корректно:
+
+```
+helm template test1 ./helm-chart -f helm-chart/values-app1.yaml
+```
+
+![helm template](img/screen2_1.png)
+![helm template 2](img/screen2_2.png)
+
+---
+
+## Задание 2. Запустить две версии в разных неймспейсах
+
+### Что было сделано
+
+Развёрнуто **три релиза** чарта в двух неймспейсах:
+
+| Релиз    | Namespace | Frontend image | Backend image          |
+|----------|-----------|----------------|------------------------|
+| app1-v1  | app1      | nginx:1.27     | wbitt/network-multitool:latest |
+| app1-v2  | app1      | nginx:1.26     | wbitt/network-multitool:latest |
+| app2-v1  | app2      | nginx:1.25     | wbitt/network-multitool:latest |
+
+В `app1` одновременно живут **две версии** (nginx:1.27 и nginx:1.26) — каждая отдельным релизом, без конфликтов. В `app2` — третья версия (nginx:1.25). Это и была цель задания — показать, что один чарт умеет раздавать разные версии приложения.
+
+Неймспейсы нужны, чтобы изолировать окружения друг от друга.
+
+### Команды
+
+```bash
+# неймспейсы
+kubectl create ns app1
+kubectl create ns app2
+
+# деплой трёх релизов
+helm install app1-v1 ./helm-chart -n app1 --set frontend.image.tag=1.27
+helm install app1-v2 ./helm-chart -n app1 --set frontend.image.tag=1.26
+helm install app2-v1 ./helm-chart -n app2 --set frontend.image.tag=1.25
+```
+
+### Результаты
+
+**Список релизов** — все три развёрнуты и активны:
+
+```
+helm list -A
+```
+
+![helm list -A](img/screen3.png)
+
+**Поды в кластере** — 6 подов (3 релиза × frontend+backend) в статусе `Running`:
+
+```
+kubectl get pods -A -o wide
+```
+
+![kubectl get pods -A](img/screen4.png)
+
+**Версии образов** в deployment'ах — каждой версии свой тег фронтенда:
+
+```
+kubectl get deployments -A -o custom-columns=NAMESPACE:.metadata.namespace,DEPLOYMENT:.metadata.name,IMAGE:.spec.template.spec.containers\[0\].image
+```
+
+![kubectl get deployments -o wide](img/screen5.png)
+
+**Сервисы** — у каждого компонента отдельный ClusterIP Service:
+
+```
+kubectl get svc -A
+```
+
+![kubectl get svc -A](img/screen6.png)
+
+---
+
+## Манифесты
+
+Полные тексты чарта находятся в папке [`helm-chart/`](helm-chart/):
+
+- [`Chart.yaml`](helm-chart/Chart.yaml)
+- [`values.yaml`](helm-chart/values.yaml)
+- [`templates/frontend-deployment.yaml`](helm-chart/templates/frontend-deployment.yaml)
+- [`templates/backend-deployment.yaml`](helm-chart/templates/backend-deployment.yaml)
+- [`templates/frontend-service.yaml`](helm-chart/templates/frontend-service.yaml)
+- [`templates/backend-service.yaml`](helm-chart/templates/backend-service.yaml)

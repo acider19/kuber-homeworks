@@ -1,0 +1,28 @@
+# Значения по умолчанию
+replicaCount: 1
+
+frontend:
+  name: frontend
+  image:
+    repository: nginx
+    tag: "1.27"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 80
+
+backend:
+  name: backend
+  image:
+    repository: wbitt/network-multitool
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  containerPort: 8080
+  env:
+    httpPort: "8080"
+    httpsPort: "8443"
+  service:
+    type: ClusterIP
+    port: 8080
+    targetPort: 8080

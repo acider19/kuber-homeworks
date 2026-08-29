@@ -1,0 +1,12 @@
+# Значения для окружения app1 (версия frontend 1.27 / backend latest)
+frontend:
+  image:
+    repository: nginx
+    tag: "1.27"
+    pullPolicy: IfNotPresent
+
+backend:
+  image:
+    repository: wbitt/network-multitool
+    tag: "latest"
+    pullPolicy: IfNotPresent

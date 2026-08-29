@@ -1,0 +1,6 @@
+apiVersion: v2
+name: web-app
+description: Helm-чарт для деплоя приложения (frontend + backend) в разные окружения
+type: application
+version: 1.0.0
+appVersion: "1.0"
